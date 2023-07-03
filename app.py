@@ -9,7 +9,7 @@ import yt_dlp
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
-from telegram.ext import (CallbackContext, Updater, CommandHandler, MessageHandler, Filters, ConversationHandler)
+from telegram.ext import (CallbackContext, Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, ConversationHandler)
 from pydub import AudioSegment
 
 app = Chalice(app_name='whisper-transcriber-bot')
@@ -101,7 +101,13 @@ def cancel_handler(update: Update, context: CallbackContext) -> int:
 def url_handler(update: Update, context: CallbackContext) -> int:
     url = update.message.text.strip()
     context.user_data['url'] = url  # сохраняем URL в пользовательских данных
-    context.bot.send_message(chat_id=update.effective_chat.id, text="Введите время начала в формате HH:MM:SS (MM:SS)")
+
+    keyboard = [[InlineKeyboardButton("Пропустить", callback_data='skip')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    context.bot.send_message(chat_id=update.effective_chat.id,
+                             text="Введите время начала в формате HH:MM:SS (MM:SS) или нажмите кнопку 'Пропустить'",
+                             reply_markup=reply_markup)
     return WAITING_FOR_START_TIME
 
 
@@ -109,14 +115,24 @@ def start_time_handler(update: Update, context: CallbackContext) -> int:
     start_time = update.message.text.strip()
 
     context.user_data['start_time'] = start_time  # сохраняем время начала в пользовательских данных
-    context.bot.send_message(chat_id=update.effective_chat.id, text="Введите время конца в формате HH:MM:SS (MM:SS)")
+    keyboard = [[InlineKeyboardButton("Пропустить", callback_data='skip')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    context.bot.send_message(chat_id=update.effective_chat.id,
+                             text="Введите время конца в формате HH:MM:SS (MM:SS) или нажмите кнопку 'Пропустить'",
+                             reply_markup=reply_markup)
     return WAITING_FOR_END_TIME
 
 
 def skip_start_time_handler(update: Update, context: CallbackContext) -> int:
     print(f"skip_start_time_handler")  # Добавлено для отладки
     context.user_data['start_time'] = None  # устанавливаем время начала в None
-    context.bot.send_message(chat_id=update.effective_chat.id, text="Введите время конца в формате HH:MM:SS (MM:SS)")
+    keyboard = [[InlineKeyboardButton("Пропустить", callback_data='skip')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    context.bot.send_message(chat_id=update.effective_chat.id,
+                             text="Введите время конца в формате HH:MM:SS (MM:SS) или нажмите кнопку 'Пропустить'",
+                             reply_markup=reply_markup)
     return WAITING_FOR_END_TIME
 
 
@@ -155,7 +171,8 @@ def process_audio(url, start_time, end_time, update, context):
         # Транскрибируем аудиофайл
         transcript = transcribe(audio_file)
         # Отправляем транскрипцию пользователю
-        context.bot.send_message(chat_id=update.effective_chat.id, text=transcript)
+        context.bot.send_message(chat_id=update.effective_chat.id,
+                                 text=f"Ваш запрос обработан! Результат:\n\n{transcript}")
         # Отправляем статистику вызова специальному боту
         log_transcribe_request(update, context, duration)
         # Удаляем временный аудиофайл
@@ -197,7 +214,7 @@ def processing_audio_handler(update: Update, context: CallbackContext) -> int:
     else:
         # Если обработка еще не завершена, отправляем сообщение и остаемся в том же состоянии
         context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text="Ваш запрос обрабатывается. Пожалуйста, подождите.")
+                                 text="Ваш запрос обрабатывается. Пожалуйста, подождите")
         return PROCESSING_AUDIO
 
 
@@ -216,11 +233,12 @@ conv_handler = ConversationHandler(
         ],
         WAITING_FOR_START_TIME: [
             MessageHandler(Filters.text & ~Filters.command, start_time_handler),
-            CommandHandler('skip', skip_start_time_handler)
+            CallbackQueryHandler(skip_start_time_handler)  # Обработчик для нажатия кнопки
+
         ],
         WAITING_FOR_END_TIME: [
             MessageHandler(Filters.text & ~Filters.command, end_time_handler),
-            CommandHandler('skip', skip_end_time_handler)
+            CallbackQueryHandler(skip_end_time_handler)
         ],
         PROCESSING_AUDIO: [
             MessageHandler(Filters.text & ~Filters.command, processing_audio_handler),
