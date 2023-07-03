@@ -1,0 +1,6 @@
+chalice
+python-telegram-bot==13.11
+openai
+yt_dlp
+ffmpeg
+pydub
