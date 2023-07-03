@@ -1,7 +1,3 @@
-Okay, I've incorporated your feedback. Here's the shortened and revised README:
-
----
-
 # Whisper Transcriber Bot
 
 Whisper Transcriber Bot is a Telegram bot that leverages the OpenAI Whisper ASR API to transcribe audio from YouTube videos.
