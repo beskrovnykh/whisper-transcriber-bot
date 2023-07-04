@@ -6,6 +6,7 @@ from chalice import Chalice
 import openai
 import os
 import yt_dlp
+import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
@@ -38,7 +39,7 @@ def parse_time(time_str):
 
 
 def download_and_trim_audio(video_url: str, start_time: int = None, end_time: int = None) -> tuple[str, float]:
-    print(
+    logging.debug(
         f"Downloading and trimming audio for url: {video_url}, start_time: {start_time}, end_time: {end_time}")  # Добавлено для отладки
 
     audio_file_path = 'chalicelib/data/sounds/temp.webm'
@@ -82,19 +83,19 @@ def transcribe(audio_file_path: str) -> str:
 def start_handler(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_chat.id
     if user_id in ALLOWED_USER_IDS:
-        context.bot.send_message(chat_id=user_id, text="Привет! Я бот для транскрибации аудиофайлов.")
+        context.bot.send_message(chat_id=user_id, text="Привет! Я бот для транскрибации аудиофайлов!")
     else:
-        context.bot.send_message(chat_id=user_id, text="Вы не авторизованы для использования этого бота.")
+        context.bot.send_message(chat_id=user_id, text="Вы не авторизованы для использования этого бота")
 
 
 # Обработчик команды /transcribe
 def transcribe_handler(update: Update, context: CallbackContext) -> int:
-    context.bot.send_message(chat_id=update.effective_chat.id, text="Отправь мне URL аудиофайла на YouTube.")
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Отправь мне URL аудиофайла на YouTube")
     return WAITING_FOR_URL
 
 
 def cancel_handler(update: Update, context: CallbackContext) -> int:
-    context.bot.send_message(chat_id=update.effective_chat.id, text="Не понимаю твою команду!")
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Не понимаю такую команду :(")
     return ConversationHandler.END
 
 
@@ -125,8 +126,7 @@ def start_time_handler(update: Update, context: CallbackContext) -> int:
 
 
 def skip_start_time_handler(update: Update, context: CallbackContext) -> int:
-    print(f"skip_start_time_handler")  # Добавлено для отладки
-    context.user_data['start_time'] = None  # устанавливаем время начала в None
+    context.user_data['start_time'] = None
     keyboard = [[InlineKeyboardButton("Пропустить", callback_data='skip')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -137,9 +137,7 @@ def skip_start_time_handler(update: Update, context: CallbackContext) -> int:
 
 
 def skip_end_time_handler(update: Update, context: CallbackContext) -> int:
-    print(f"skip_end_time_handler")  # Добавлено для отладки
-
-    context.user_data['end_time'] = None  # устанавливаем время конца в None
+    context.user_data['end_time'] = None
     start_time_str = context.user_data.get('start_time', None)
 
     start_time = parse_time(start_time_str) if start_time_str else None
@@ -147,7 +145,7 @@ def skip_end_time_handler(update: Update, context: CallbackContext) -> int:
 
     url = context.user_data['url']
     if not url:
-        print("URL is missing in user data")
+        logging.error("URL is missing in user data")
         return ConversationHandler.END
 
     processing_done_event.clear()
@@ -178,15 +176,16 @@ def process_audio(url, start_time, end_time, update, context):
         # Удаляем временный аудиофайл
         os.remove(audio_file)
     except Exception as e:
-        print(f"Error in processing audio: {e}")
+        logging.error(f"Error in processing audio: {e}")
+        context.bot.send_message(chat_id=update.effective_chat.id,
+                                 text=f"Ошибка {e}! Убедитесь что правильно задали время начала и конца",)
+        cancel_handler(update, context)
     finally:
         # Когда обработка завершена, устанавливаем событие
         processing_done_event.set()
 
 
 def end_time_handler(update: Update, context: CallbackContext) -> int:
-    print(f"end_time_handler")  # Добавлено для отладки
-
     end_time_str = update.message.text.strip()
     context.user_data['end_time'] = end_time_str  # сохраняем время конца в пользовательских данных
 
@@ -198,7 +197,7 @@ def end_time_handler(update: Update, context: CallbackContext) -> int:
 
     url = context.user_data['url']
     if not url:
-        print("URL is missing in user data")
+        logging.error("URL is missing in user data")
         return ConversationHandler.END
 
     processing_done_event.clear()
@@ -275,8 +274,6 @@ def transcribe_webhook():
         return {'error': str(e)}
 
 
-# webhook_url = "https://hdwyooncln2d7mxb4e324r3ju40xculq.lambda-url.ap-southeast-2.on.aws/"
-# webhook_url = "https://46f7-110-139-179-36.ngrok-free.app/webhook"
 @app.route('/set_webhook', methods=['POST'])
 def set_webhook():
     url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
