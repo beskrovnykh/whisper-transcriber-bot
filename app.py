@@ -10,11 +10,13 @@ import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram import Update
-from telegram.ext import (CallbackContext, Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, ConversationHandler)
+from telegram.ext import (CallbackContext, Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters,
+                          ConversationHandler)
 from pydub import AudioSegment
 
 app = Chalice(app_name='whisper-transcriber-bot')
 app.debug = True
+app.log.setLevel(logging.INFO)
 
 ALLOWED_USER_IDS = [int(user_id) for user_id in os.environ["ALLOWED_USER_IDS"].split(",")]
 
@@ -24,6 +26,7 @@ WAITING_FOR_END_TIME = 3
 PROCESSING_AUDIO = 4
 
 processing_done_event = threading.Event()
+processing_done_event.set()
 
 
 def parse_time(time_str):
@@ -39,35 +42,39 @@ def parse_time(time_str):
 
 
 def download_and_trim_audio(video_url: str, start_time: int = None, end_time: int = None) -> tuple[str, float]:
-    logging.debug(
+    app.log.info(
         f"Downloading and trimming audio for url: {video_url}, start_time: {start_time}, end_time: {end_time}")  # Добавлено для отладки
 
-    audio_file_path = 'chalicelib/data/sounds/temp.webm'
-    trimmed_audio_file_path = 'chalicelib/data/sounds/trimmed_temp.webm'
+    try:
+        audio_file_path = 'chalicelib/data/sounds/temp.webm'
+        trimmed_audio_file_path = 'chalicelib/data/sounds/trimmed_temp.webm'
 
-    if os.path.exists(audio_file_path):
-        os.remove(audio_file_path)
-    if os.path.exists(trimmed_audio_file_path):
-        os.remove(trimmed_audio_file_path)
+        if os.path.exists(audio_file_path):
+            os.remove(audio_file_path)
+        if os.path.exists(trimmed_audio_file_path):
+            os.remove(trimmed_audio_file_path)
 
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': audio_file_path
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.extract_info(video_url, download=True)
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': audio_file_path
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(video_url, download=True)
 
-    # Обрезка аудиофайла
-    audio = AudioSegment.from_file(audio_file_path)
-    start_time = start_time * 1000 if start_time is not None else 0
-    end_time = end_time * 1000 if end_time is not None else len(audio)
-    trimmed_audio = audio[start_time:end_time]
-    trimmed_audio.export(trimmed_audio_file_path, format="webm")
+        # Обрезка аудиофайла
+        audio = AudioSegment.from_file(audio_file_path)
+        start_time = start_time * 1000 if start_time is not None else 0
+        end_time = end_time * 1000 if end_time is not None else len(audio)
+        trimmed_audio = audio[start_time:end_time]
+        trimmed_audio.export(trimmed_audio_file_path, format="webm")
+        # Calculate duration in seconds
+        duration_seconds = len(trimmed_audio) / 1000
+        return trimmed_audio_file_path, duration_seconds
 
-    # Calculate duration in seconds
-    duration_seconds = len(trimmed_audio) / 1000
+    except Exception as e:
+        app.log.error(f"Error in download_and_trim_audio: {e}")
 
-    return trimmed_audio_file_path, duration_seconds
+    app.log.info("End of download_and_trim_audio")
 
 
 def transcribe(audio_file_path: str) -> str:
@@ -82,16 +89,20 @@ def transcribe(audio_file_path: str) -> str:
 # Обработчик команды /start
 def start_handler(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_chat.id
-    if user_id in ALLOWED_USER_IDS:
-        context.bot.send_message(chat_id=user_id, text="Привет! Я бот для транскрибации аудиофайлов!")
-    else:
-        context.bot.send_message(chat_id=user_id, text="Вы не авторизованы для использования этого бота")
+    # if user_id in ALLOWED_USER_IDS:
+    context.bot.send_message(chat_id=user_id, text="Привет! Я бот для транскрибации аудиофайлов!")
+    # else:
+    #    context.bot.send_message(chat_id=user_id, text="Вы не авторизованы для использования этого бота")
 
 
 # Обработчик команды /transcribe
 def transcribe_handler(update: Update, context: CallbackContext) -> int:
-    context.bot.send_message(chat_id=update.effective_chat.id, text="Отправь мне URL аудиофайла на YouTube")
-    return WAITING_FOR_URL
+    # Проверяем, выполняется ли в данный момент другая операция
+    if not processing_done_event.is_set():
+        return processing_audio_handler(update, context)
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Отправь мне URL аудиофайла на YouTube")
+        return WAITING_FOR_URL
 
 
 def cancel_handler(update: Update, context: CallbackContext) -> int:
@@ -137,6 +148,7 @@ def skip_start_time_handler(update: Update, context: CallbackContext) -> int:
 
 
 def skip_end_time_handler(update: Update, context: CallbackContext) -> int:
+    app.log.info("skip_end_time_handler")
     context.user_data['end_time'] = None
     start_time_str = context.user_data.get('start_time', None)
 
@@ -145,7 +157,7 @@ def skip_end_time_handler(update: Update, context: CallbackContext) -> int:
 
     url = context.user_data['url']
     if not url:
-        logging.error("URL is missing in user data")
+        app.log.error("URL is missing in user data")
         return ConversationHandler.END
 
     processing_done_event.clear()
@@ -162,30 +174,67 @@ def log_transcribe_request(update: Update, context: CallbackContext, duration: f
     context.bot.send_message(chat_id=os.environ["SUPPORT_CHAT_ID"], text=message)
 
 
+def send_large_message(bot, chat_id, text, max_message_length=4096):
+    app.log.info(f"send_large_message {text}")
+    while text:
+        part = text[:max_message_length]
+        cut_pos = max_message_length
+
+        # Если часть сообщения длиннее, чем максимально допустимая длина,
+        # пытаемся обрезать по последнему пробелу или переносу строки.
+        if len(part) == max_message_length:
+            last_space_pos = part.rfind(' ')
+            last_newline_pos = part.rfind('\n')
+
+            cut_pos = max(last_space_pos, last_newline_pos)
+            if cut_pos == -1:
+                cut_pos = max_message_length  # Если нет пробелов или переносов строки, обрезаем по максимальной длине.
+
+        # Отправляем часть сообщения и удаляем ее из исходного текста.
+        bot.send_message(chat_id=chat_id, text=part[:cut_pos])
+        text = text[cut_pos:].lstrip()  # Удаляем пробелы в начале следующей части текста.
+
+
 def process_audio(url, start_time, end_time, update, context):
+    app.log.info("process_audio")
     # Загружаем аудиофайл по URL
     try:
+        # Сообщаем пользователю, что начался процесс транскрибирования
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Начался процесс транскрибирования. "
+                                                                        "Пожалуйста, подождите")
+
+        app.log.info("Before download_and_trim_audio")
         audio_file, duration = download_and_trim_audio(url, start_time, end_time)
+        app.log.info("After download_and_trim_audio")
+
+        # Отправляем аудиофайл пользователю
+        with open(audio_file, 'rb') as audio_file_to_send:
+            context.bot.send_document(chat_id=update.effective_chat.id, document=audio_file_to_send)
+
         # Транскрибируем аудиофайл
         transcript = transcribe(audio_file)
+
         # Отправляем транскрипцию пользователю
-        context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text=f"Ваш запрос обработан! Результат:\n\n{transcript}")
+        send_large_message(context.bot, update.effective_chat.id,
+                           text=f"Ваш запрос обработан! Результат:\n\n{transcript}")
+
         # Отправляем статистику вызова специальному боту
         log_transcribe_request(update, context, duration)
         # Удаляем временный аудиофайл
-        os.remove(audio_file)
+        # os.remove(audio_file)
+
     except Exception as e:
-        logging.error(f"Error in processing audio: {e}")
+        app.log.error(f"Error in processing audio: {e}")
         context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text=f"Ошибка {e}! Убедитесь что правильно задали время начала и конца",)
-        cancel_handler(update, context)
+                                 text=f"Ошибка {e}!")
     finally:
+        app.log.info("Finalize process audio")
         # Когда обработка завершена, устанавливаем событие
         processing_done_event.set()
 
 
 def end_time_handler(update: Update, context: CallbackContext) -> int:
+    app.log.info("end_time_handler")
     end_time_str = update.message.text.strip()
     context.user_data['end_time'] = end_time_str  # сохраняем время конца в пользовательских данных
 
@@ -197,20 +246,20 @@ def end_time_handler(update: Update, context: CallbackContext) -> int:
 
     url = context.user_data['url']
     if not url:
-        logging.error("URL is missing in user data")
+        app.log.error("URL is missing in user data")
         return ConversationHandler.END
 
     processing_done_event.clear()
+
     threading.Thread(target=process_audio, args=(url, start_time, end_time, update, context)).start()
 
     return PROCESSING_AUDIO  # переходим в состояние обработки аудио
 
 
 def processing_audio_handler(update: Update, context: CallbackContext) -> int:
+    app.log.info("processing_audio_handler")
     # Если обработка завершена, завершаем диалог
-    if processing_done_event.is_set():
-        return ConversationHandler.END
-    else:
+    if not processing_done_event.is_set():
         # Если обработка еще не завершена, отправляем сообщение и остаемся в том же состоянии
         context.bot.send_message(chat_id=update.effective_chat.id,
                                  text="Ваш запрос обрабатывается. Пожалуйста, подождите")
@@ -240,6 +289,7 @@ conv_handler = ConversationHandler(
             CallbackQueryHandler(skip_end_time_handler)
         ],
         PROCESSING_AUDIO: [
+            CommandHandler('transcribe', transcribe_handler),
             MessageHandler(Filters.text & ~Filters.command, processing_audio_handler),
             MessageHandler(Filters.command, processing_audio_handler),
         ]
