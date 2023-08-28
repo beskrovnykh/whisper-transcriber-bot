@@ -13,12 +13,11 @@ from telegram import Update
 from telegram.ext import (CallbackContext, Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters,
                           ConversationHandler)
 from pydub import AudioSegment
+from typing import Tuple
 
 app = Chalice(app_name='whisper-transcriber-bot')
 app.debug = True
 app.log.setLevel(logging.INFO)
-
-ALLOWED_USER_IDS = [int(user_id) for user_id in os.environ["ALLOWED_USER_IDS"].split(",")]
 
 WAITING_FOR_URL = 1
 WAITING_FOR_START_TIME = 2
@@ -41,7 +40,7 @@ def parse_time(time_str):
     return hours * 3600 + minutes * 60 + seconds
 
 
-def download_and_trim_audio(video_url: str, start_time: int = None, end_time: int = None) -> tuple[str, float]:
+def download_and_trim_audio(video_url: str, start_time: int = None, end_time: int = None) -> Tuple[str, float]:
     app.log.info(
         f"Downloading and trimming audio for url: {video_url}, start_time: {start_time}, end_time: {end_time}")  # Добавлено для отладки
 
@@ -89,10 +88,7 @@ def transcribe(audio_file_path: str) -> str:
 # Обработчик команды /start
 def start_handler(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_chat.id
-    # if user_id in ALLOWED_USER_IDS:
     context.bot.send_message(chat_id=user_id, text="Привет! Я бот для транскрибации аудиофайлов!")
-    # else:
-    #    context.bot.send_message(chat_id=user_id, text="Вы не авторизованы для использования этого бота")
 
 
 # Обработчик команды /transcribe
@@ -171,7 +167,7 @@ def log_transcribe_request(update: Update, context: CallbackContext, duration: f
     time = datetime.now()
     cost = duration / 60 * 0.006
     message = f"Пользователь {user_id} начал транскрибацию в {time}. Стоимость составляет ${cost}."
-    context.bot.send_message(chat_id=os.environ["SUPPORT_CHAT_ID"], text=message)
+    context.bot.send_message(chat_id=update.effective_chat.id, text=message)
 
 
 def send_large_message(bot, chat_id, text, max_message_length=4096):
@@ -225,8 +221,7 @@ def process_audio(url, start_time, end_time, update, context):
 
     except Exception as e:
         app.log.error(f"Error in processing audio: {e}")
-        context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text=f"Ошибка {e}!")
+
     finally:
         app.log.info("Finalize process audio")
         # Когда обработка завершена, устанавливаем событие
@@ -326,6 +321,7 @@ def transcribe_webhook():
 
 @app.route('/set_webhook', methods=['POST'])
 def set_webhook():
+    app.log.info("set_webhook")
     url = f"https://api.telegram.org/bot{bot_token}/setWebhook"
     webhook_url = app.current_request.json_body['webhook_url']
     data = {"url": webhook_url}

@@ -1,0 +1,22 @@
+{
+  "version": "2.0",
+  "app_name": "whisper-transcriber-bot",
+  "stages": {
+    "dev": {
+      "iam_policy_file": "dev-policy.json",
+      "api_gateway_stage": "api",
+      "autogen_policy": false,
+      "environment_variables": {
+        "TELEGRAM_BOT_ID": "6250665882:AAG0TuQpdHnudlp8XEltx5OQZ1zRjDrUJ0g"
+      }
+    },
+    "local": {
+      "iam_policy_file": "dev-policy.json",
+      "api_gateway_stage": "api",
+      "autogen_policy": false,
+      "environment_variables": {
+        "TELEGRAM_BOT_ID": "6226443559:AAHtj3nUCpR67LWyKe2OWaTF3zXvtHCeeEQ"
+      }
+    }
+  }
+}
